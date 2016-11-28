@@ -24,6 +24,9 @@
 #include "task.h"
 #include "croutine.h"
 
+#include "usart_ATmega1284.h"
+
+
 void A2D_init() {
 	ADCSRA |= (1 << ADEN) | (1 << ADSC) | (1 << ADATE);
 	// ADEN: Enables analog-to-digital conversion
@@ -46,157 +49,73 @@ void Set_A2D_Pin(unsigned char pinNum) {
 }
 
 
-// Sends signal via bluetooth to the "mouse"
-enum States1{Init1, Joystick, Autonomous}State1;
-void Tick1() {
-	switch(State1) {
-		case Init1:
+enum States{Init, Joystick, Autonomous}State;
+unsigned char data;
+void Tick() {
+	
+	unsigned short sensorReading = ADC; 
+
+	switch(State) {
+		case Init:
 			break;
 		case Joystick:
+			if(USART_HasReceived(0)) {
+				data = USART_Receive(0);
+				if(data == 'w') {
+					PORTB = 0x03;
+				}
+				else if(data == 's') {
+					PORTB = 0x05;
+				}
+				else if(data == 'h') {
+					PORTB = 0x00;
+				}
+			}
 			break;
 		case Autonomous:
-			break;
-		default:
-			break;
-	}
-	switch(State1) {
-		case Init1:
-			break;
-		case Joystick:
-			break;
-		case Autonomous:
+			PORTD = sensorReading;
+			if(sensorReading > 256) {
+				PORTB = 0x00; //wheels
+			}
+			else {
+				PORTB = 0x03; //wheels
+			}
 			break;
 		default:
 			break;
 	}	
-}
-//-----------------------------------------------------------------------------------------------------------------------------------------------------------
-
-// Drives the LED Matrix, allowing user to see what the joystick is inputting
-enum States2{Init2, LEDmatrix}State2; 
-void Tick2() {
-
-	unsigned short input = ADC;
-
-	switch(State2) {
-		case Init2:
-			PORTC = 0x10;
-			PORTD = 0xFE;
+	switch(State) {
+		case Init:
+			State = Joystick;
 			break;
-		case LEDmatrix:
-			Set_A2D_Pin(0x00);
-			vTaskDelay(3);
-			input = ADC;
-			if( input < 500 ) {
-				Set_A2D_Pin(0x01);
-				vTaskDelay(3);
-				input = ADC;
-				if(input < 500) {
-					//left-down
-					if(PORTC != 0x80) {
-						PORTC = (PORTC << 1);
-					}
-					if(PORTD != 0xEF) {
-						PORTD = ~PORTD;
-						PORTD = (PORTD << 1);
-						PORTD = ~PORTD;
-					}
-				}
-				else if(input > 524) {
-					//left-up
-					if(PORTC != 0x80) {
-						PORTC = (PORTC << 1);
-					}
-					if(PORTD != 0xFE) {
-						PORTD = ~PORTD;
-						PORTD = (PORTD >> 1);
-						PORTD = ~PORTD;
-					}
-				}
-				else {
-					//left
-					if(PORTC != 0x80) {
-						PORTC = (PORTC << 1);
-					}
-				}
-			}
-			else if( input > 524 ) {
-				Set_A2D_Pin(0x01);
-				vTaskDelay(3);
-				input = ADC;
-				if(input < 500) {
-					//right-down
-					if( PORTC != 0x01 ) {
-						PORTC = (PORTC >> 1);
-					}
-					if(PORTD != 0xEF) {
-						PORTD = ~PORTD;
-						PORTD = (PORTD << 1);
-						PORTD = ~PORTD;
-					}
-				}
-				else if(input > 524) {
-					//right-up
-					if(PORTC != 0x01) {
-						PORTC = (PORTC >> 1);
-					}
-					if(PORTD != 0xFE) {
-						PORTD = ~PORTD;
-						PORTD = (PORTD >> 1);
-						PORTD = ~PORTD;
-					}
-				}
-				else {
-					//right
-					if(PORTC != 0x01) {
-						PORTC = (PORTC >> 1);
-					}
-				}
+		case Joystick:
+			if(data == '1') {
+				State = Autonomous;
 			}
 			else {
-				Set_A2D_Pin(0x01);
-				vTaskDelay(3);
-				input = ADC;
-				if(input > 524) {
-					//up
-					if(PORTD != 0xFE) {
-						PORTD = ~PORTD;
-						PORTD = (PORTD >> 1);
-						PORTD = ~PORTD;
-					}
-				}
-				else if(input < 500) {
-					//down
-					if(PORTD != 0xEF) {
-						PORTD = ~PORTD;
-						PORTD = (PORTD << 1);
-						PORTD = ~PORTD;
-					}
+				State = Joystick;
+			}
+			break;
+		case Autonomous:
+			if(USART_HasReceived(0)) {
+				data = USART_Receive(0);
+				if(data == '0') {
+					PORTB = 0x00;
+					State = Joystick;
 				}
 			}
 			break;
 		default:
-			break;
-	}
-	switch(State2) {
-		case Init2:
-			State2 = LEDmatrix;
-			break;
-		case LEDmatrix:
-			State2 = LEDmatrix;
-			break;
-		default:
-			State2 = Init2;
+			State = Init;
 			break;
 	}
 }
-//-----------------------------------------------------------------------------------------------------------------------------------------------------------
 
 
 void Task() {
 	for(;;)
 	{
-		Tick2();
+		Tick();
 		vTaskDelay(50);
 	}
 }
@@ -206,12 +125,17 @@ void StartSecPulse(unsigned portBASE_TYPE Priority)
 	xTaskCreate(Task, (signed portCHAR *)"Task", configMINIMAL_STACK_SIZE, NULL, Priority, NULL );
 }
 
+
 int main(void)
 {
-    DDRC = 0xFF; PORTC = 0x00;
-    DDRD = 0xFF; PORTD = 0x00;
+    //DDRA = 0xFF; PORTA = 0x00;
+	DDRB = 0xFF; PORTB = 0x00;
+	DDRC = 0xFF; PORTC = 0x00;
+	DDRD = 0xFF; PORTD = 0x00;
 
 	A2D_init();
+
+	initUSART(0);
 
 	//Start Tasks
 	StartSecPulse(1);
